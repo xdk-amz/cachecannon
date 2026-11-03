@@ -138,12 +138,26 @@ struct BenchArgs {
     resp3: bool,
 
     /// Skip TLS certificate verification.
-    #[arg(long)]
+    #[arg(long, visible_alias = "insecure")]
     tls_skip_verify: bool,
 
     /// TLS SNI hostname (defaults to --host value).
-    #[arg(long)]
+    #[arg(long, visible_alias = "sni")]
     tls_hostname: Option<String>,
+
+    /// PEM CA bundle that signs the server certificate, for a server whose
+    /// certificate is not issued by a public CA.
+    #[arg(long, value_name = "FILE")]
+    cacert: Option<PathBuf>,
+
+    /// PEM client certificate chain, for servers that require mutual TLS
+    /// (tls-auth-clients yes). Needs --key.
+    #[arg(long, value_name = "FILE", requires = "key")]
+    cert: Option<PathBuf>,
+
+    /// PEM private key (unencrypted) for --cert.
+    #[arg(long, value_name = "FILE", requires = "cert")]
+    key: Option<PathBuf>,
 
     /// Connection timeout (e.g. 5s, 500ms).
     #[arg(long, value_parser = parse_duration)]
@@ -437,6 +451,16 @@ fn apply_bench_flags(
     if let Some(ref hostname) = args.tls_hostname {
         config.target.tls_hostname = Some(hostname.clone());
     }
+    // Certificate files imply TLS, as they do for valkey-cli --tls.
+    if let Some(ref path) = args.cacert {
+        config.target.tls = true;
+        config.target.tls_ca_file = Some(path.clone());
+    }
+    if let (Some(cert), Some(key)) = (&args.cert, &args.key) {
+        config.target.tls = true;
+        config.target.tls_cert_file = Some(cert.clone());
+        config.target.tls_key_file = Some(key.clone());
+    }
 
     // General
     if let Some(d) = args.duration {
@@ -581,6 +605,54 @@ mod tests {
         Cli::try_parse_from(std::iter::once("valkey-lab").chain(args.iter().copied()))
             .unwrap()
             .bench
+    }
+
+    #[test]
+    fn tls_file_flags_set_the_target_and_enable_tls() {
+        let config = build_config(&bench(&[
+            "--cacert",
+            "/etc/ca.crt",
+            "--cert",
+            "/etc/c.crt",
+            "--key",
+            "/etc/c.key",
+        ]))
+        .unwrap();
+        assert!(config.target.tls);
+        assert_eq!(
+            config.target.tls_ca_file.as_deref(),
+            Some(std::path::Path::new("/etc/ca.crt"))
+        );
+        assert_eq!(
+            config.target.tls_cert_file.as_deref(),
+            Some(std::path::Path::new("/etc/c.crt"))
+        );
+        assert_eq!(
+            config.target.tls_key_file.as_deref(),
+            Some(std::path::Path::new("/etc/c.key"))
+        );
+
+        let config = build_config(&bench(&["--cacert", "/etc/ca.crt"])).unwrap();
+        assert!(config.target.tls && config.target.tls_cert_file.is_none());
+        assert!(!build_config(&bench(&[])).unwrap().target.tls);
+    }
+
+    #[test]
+    fn client_cert_and_key_come_together() {
+        let parse = |a: &[&str]| {
+            Cli::try_parse_from(std::iter::once("valkey-lab").chain(a.iter().copied()))
+        };
+        assert!(parse(&["--cert", "c.crt"]).is_err());
+        assert!(parse(&["--key", "c.key"]).is_err());
+        assert!(parse(&["--cert", "c.crt", "--key", "c.key"]).is_ok());
+    }
+
+    #[test]
+    fn valkey_cli_tls_aliases() {
+        let config =
+            build_config(&bench(&["--tls", "--insecure", "--sni", "cache.local"])).unwrap();
+        assert!(!config.target.tls_verify);
+        assert_eq!(config.target.tls_hostname.as_deref(), Some("cache.local"));
     }
 
     /// Flags are applied after the base config is loaded, so the result is

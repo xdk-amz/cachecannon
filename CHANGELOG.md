@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- valkey-lab `--cacert`, `--cert` and `--key` set `tls_ca_file`,
+  `tls_cert_file` and `tls_key_file`, so a private CA and mutual TLS
+  (`tls-auth-clients yes`) work from the command line, and imply `--tls` as
+  in valkey-cli. `--cert` and `--key` must be given together.
+  `--insecure` and `--sni` are accepted as valkey-cli's names for
+  `--tls-skip-verify` and `--tls-hostname`.
 - `workload.routing = "routed"` loads several nodes the way a client
   population does: each worker's dispatcher draws every request's key from
   the whole keyspace, routes it, and queues it for the owning node, so a node

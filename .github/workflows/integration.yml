@@ -209,6 +209,15 @@ jobs:
           echo "--- server certificate ---"
           openssl x509 -in valkey.crt -noout -subject -issuer -ext subjectAltName,basicConstraints
 
+          # A client certificate from the same CA, for the mutual TLS server.
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout client.key -out client.csr \
+            -subj "/CN=cachecannon-client"
+          printf 'basicConstraints = critical,CA:FALSE\nextendedKeyUsage = clientAuth\n' > client.ext
+          openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
+            -CAcreateserial -out client.crt -days 1 -sha256 \
+            -extfile client.ext
+
       - name: Start Valkey with TLS
         run: |
           valkey-server \
@@ -220,26 +229,62 @@ jobs:
             --tls-auth-clients no \
             --daemonize yes
 
-          # Wait for Valkey to be ready (fail if it never responds)
-          for i in $(seq 1 30); do
-            if valkey-cli --tls \
-              --cert /tmp/valkey-tls/valkey.crt --key /tmp/valkey-tls/valkey.key \
-              --cacert /tmp/valkey-tls/ca.crt \
-              -p 6380 ping 2>/dev/null | grep -q PONG; then
-              echo "Valkey TLS is ready"
-              exit 0
+          # A second server that requires a client certificate (mutual TLS).
+          valkey-server \
+            --tls-port 6381 \
+            --port 0 \
+            --tls-cert-file /tmp/valkey-tls/valkey.crt \
+            --tls-key-file /tmp/valkey-tls/valkey.key \
+            --tls-ca-cert-file /tmp/valkey-tls/ca.crt \
+            --tls-auth-clients yes \
+            --daemonize yes
+
+          # Wait for both servers to be ready (fail if either never responds)
+          for port in 6380 6381; do
+            ready=0
+            for i in $(seq 1 30); do
+              if valkey-cli --tls \
+                --cert /tmp/valkey-tls/client.crt --key /tmp/valkey-tls/client.key \
+                --cacert /tmp/valkey-tls/ca.crt \
+                -p $port ping 2>/dev/null | grep -q PONG; then
+                echo "Valkey TLS on $port is ready"
+                ready=1
+                break
+              fi
+              echo "Waiting for Valkey TLS on $port... ($i)"
+              sleep 1
+            done
+            if [ "$ready" != 1 ]; then
+              echo "ERROR: Valkey TLS on $port never became ready"
+              exit 1
             fi
-            echo "Waiting for Valkey TLS... ($i)"
-            sleep 1
           done
-          echo "ERROR: Valkey TLS never became ready"
-          exit 1
 
       - name: Build
         run: cargo build --release
 
       - name: Run benchmark against Valkey TLS
         run: ./target/release/cachecannon config/valkey-tls-ci.toml
+
+      - name: Run benchmark against Valkey with mutual TLS
+        run: ./target/release/cachecannon config/valkey-mtls-ci.toml
+
+      - name: Mutual TLS without a client certificate fails
+        run: |
+          sed -e '/^tls_cert_file/d' -e '/^tls_key_file/d' \
+            config/valkey-mtls-ci.toml > /tmp/valkey-mtls-nocert.toml
+          if ./target/release/cachecannon /tmp/valkey-mtls-nocert.toml; then
+            echo "ERROR: a run without a client certificate succeeded"
+            exit 1
+          fi
+
+      - name: valkey-lab with --cacert, --cert and --key
+        run: |
+          ./target/release/valkey-lab -p 6381 -t 2 -c 4 -P 8 -d 3s --warmup 1s \
+            --cacert /tmp/valkey-tls/ca.crt \
+            --cert /tmp/valkey-tls/client.crt --key /tmp/valkey-tls/client.key \
+            --tls-hostname localhost -o json > /tmp/valkey-lab-mtls.json
+          grep -q '"type":"result"' /tmp/valkey-lab-mtls.json
 
   request-timeout:
     name: Request timeout (black-hole server)

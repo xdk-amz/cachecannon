@@ -1,0 +1,31 @@
+# CI configuration for Valkey with mutual TLS (tls-auth-clients yes): the
+# client presents a certificate signed by the CA the job generates.
+
+[general]
+duration = "5s"
+warmup = "2s"
+threads = 2
+
+[target]
+endpoints = ["127.0.0.1:6381"]
+protocol = "resp"
+tls = true
+tls_hostname = "localhost"
+tls_ca_file = "/tmp/valkey-tls/ca.crt"
+tls_cert_file = "/tmp/valkey-tls/client.crt"
+tls_key_file = "/tmp/valkey-tls/client.key"
+
+[connection]
+connections = 4
+pipeline_depth = 8
+
+[workload.keyspace]
+length = 16
+count = 10000
+
+[workload.commands]
+get = 80
+set = 20
+
+[workload.values]
+length = 64

@@ -60,8 +60,11 @@ Flag | Default | Description
 `--parquet` | none | Write results to Parquet file
 `--cpu-list` | none | Pin threads to CPUs (e.g. 0-3,8-11)
 `--resp3` | off | Use RESP3 protocol
-`--tls-skip-verify` | off | Skip TLS certificate verification
-`--tls-hostname` | host value | TLS SNI hostname override
+`--tls-skip-verify`, `--insecure` | off | Skip TLS certificate verification
+`--tls-hostname`, `--sni` | host value | TLS SNI hostname override
+`--cacert` | system roots | PEM CA bundle for the server certificate (implies `--tls`)
+`--cert` | none | PEM client certificate for mutual TLS; needs `--key` (implies `--tls`)
+`--key` | none | Unencrypted PEM key for `--cert`
 `--connect-timeout` | `5s` | Connection timeout
 `--request-timeout` | `1s` | Request timeout
 `--color` | `auto` | Color mode: auto, always, never
@@ -139,6 +142,9 @@ valkey-lab -c 32 -P 64 -t 8
 
 # Cluster mode with TLS
 valkey-lab --cluster --tls -h cluster.example.com
+
+# TLS with a private CA and a client certificate (tls-auth-clients yes)
+valkey-lab --cacert ca.crt --cert client.crt --key client.key -h cache.internal
 
 # Write-heavy workload with Zipfian distribution
 valkey-lab -r 20:80 --distribution zipf -s 512
